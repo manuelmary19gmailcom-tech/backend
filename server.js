@@ -164,8 +164,6 @@ async function runSelfTest() {
 
     await db.query("DELETE FROM messages WHERE userId = ?", ["__selftest__"]);
     await db.query("DELETE FROM bible_verses WHERE reference_text = ?", ["Self Test 1:1"]);
-
-    console.log("SELF-TEST PASSED: messages, replies, and bible verses can be saved.");
     return true;
   } catch (err) {
     try {
@@ -249,15 +247,6 @@ async function initDatabase() {
   await ensureColumn("messages", "date", "DATETIME DEFAULT CURRENT_TIMESTAMP");
 
   await repairMessagesTable();
-
-  const [columns] = await db.query("SHOW COLUMNS FROM messages");
-  console.log(
-    "messages table columns:",
-    columns.map((c) => `${c.Field} (${c.Type})`).join(", ")
-  );
-
-  console.log("All tables are ready.");
-
 
   await runSelfTest();
 }
