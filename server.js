@@ -5,9 +5,6 @@ const cors = require("cors");
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// ======================================
-// DATABASE SETTINGS
-// ======================================
 
 const DB_CONFIG = {
   host: process.env.DB_HOST || "localhost",
@@ -18,21 +15,11 @@ const DB_CONFIG = {
 
 const DB_NAME = process.env.DB_NAME || "shepherd_ministry_db";
 
-// Will be assigned inside startServer() after the database exists
 let db;
-
-// ======================================
-// MIDDLEWARE
-// ======================================
 
 app.use(cors());
 app.use(express.json());
 
-// ======================================
-// AUTO-CREATE DATABASE AND TABLES
-// ======================================
-
-// Adds a column only if it does not exist yet (never deletes data)
 async function ensureColumn(table, column, definition) {
   const [rows] = await db.query(
     `SELECT COLUMN_NAME
@@ -47,7 +34,6 @@ async function ensureColumn(table, column, definition) {
   }
 }
 
-// Reads the real column info of a table
 async function getColumns(table) {
   const [rows] = await db.query(
     `SELECT
@@ -66,8 +52,6 @@ async function getColumns(table) {
   return rows;
 }
 
-// Makes an OLD / DIFFERENT "messages" table compatible with this server.
-// It only changes column definitions. It never deletes rows or columns.
 async function repairMessagesTable() {
   const textTypes = ["varchar", "char", "tinytext", "text", "mediumtext", "longtext"];
   const bigTextTypes = ["text", "mediumtext", "longtext"];
@@ -86,7 +70,7 @@ async function repairMessagesTable() {
   let cols = await getColumns("messages");
   const find = (n) => cols.find((c) => c.name.toLowerCase() === n.toLowerCase());
 
-  // id must be an auto-increment primary key
+
   const idCol = find("id");
   if (!idCol) {
     await tryAlter("added id column", "ALTER TABLE `messages` ADD COLUMN `id` INT NOT NULL AUTO_INCREMENT PRIMARY KEY FIRST");
@@ -98,19 +82,17 @@ async function repairMessagesTable() {
     }
   }
 
-  // userId must accept any text (e.g. "user_12", an email, or a number)
   const userIdCol = find("userId");
   if (userIdCol && !textTypes.includes(userIdCol.dataType)) {
     await tryAlter("userId is now VARCHAR(100)", "ALTER TABLE `messages` MODIFY `userId` VARCHAR(100) NOT NULL DEFAULT ''");
   }
 
-  // name must be text
+
   const nameCol = find("name");
   if (nameCol && !textTypes.includes(nameCol.dataType)) {
     await tryAlter("name is now VARCHAR(100)", "ALTER TABLE `messages` MODIFY `name` VARCHAR(100) NULL DEFAULT 'Member'");
   }
 
-  // message and reply must be long text (not a short VARCHAR)
   for (const field of ["message", "reply"]) {
     const col = find(field);
     if (col && !bigTextTypes.includes(col.dataType)) {
@@ -118,14 +100,11 @@ async function repairMessagesTable() {
     }
   }
 
-  // date must be a real date/time or text
   const dateCol = find("date");
   if (dateCol && !dateTypes.includes(dateCol.dataType) && !textTypes.includes(dateCol.dataType)) {
     await tryAlter("date is now DATETIME", "ALTER TABLE `messages` MODIFY `date` DATETIME NULL DEFAULT CURRENT_TIMESTAMP");
   }
 
-  // Any EXTRA column that is required (NOT NULL, no default) would make every
-  // insert fail, so make those optional.
   cols = await getColumns("messages");
   for (const c of cols) {
     const isKnown = knownColumns.includes(c.name.toLowerCase());
@@ -140,7 +119,6 @@ async function repairMessagesTable() {
   }
 }
 
-// Really tests saving a message, a reply, and a bible verse, then removes the test rows.
 async function runSelfTest() {
   const conn = await db.getConnection();
   try {
@@ -184,7 +162,6 @@ async function runSelfTest() {
 
     await conn.rollback();
 
-    // Safety cleanup in case a table type does not support rollback
     await db.query("DELETE FROM messages WHERE userId = ?", ["__selftest__"]);
     await db.query("DELETE FROM bible_verses WHERE reference_text = ?", ["Self Test 1:1"]);
 
@@ -194,7 +171,7 @@ async function runSelfTest() {
     try {
       await conn.rollback();
     } catch (e) {
-      // ignore
+
     }
     console.error("SELF-TEST FAILED:", err.code || "", err.sqlMessage || err.message);
     console.error("Send this error message so it can be fixed.");
@@ -205,7 +182,7 @@ async function runSelfTest() {
 }
 
 async function initDatabase() {
-  // 1. Create the database if it does not exist
+
   const setupConnection = await mysql.createConnection(DB_CONFIG);
 
   await setupConnection.query(
@@ -215,7 +192,6 @@ async function initDatabase() {
   await setupConnection.end();
   console.log(`Database ready: ${DB_NAME}`);
 
-  // 2. Create the connection pool using that database
   db = mysql.createPool({
     ...DB_CONFIG,
     database: DB_NAME,
@@ -225,7 +201,6 @@ async function initDatabase() {
     dateStrings: true
   });
 
-  // 3. Create tables if they do not exist
   await db.query(
     `CREATE TABLE IF NOT EXISTS church_events (
       event_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -264,7 +239,6 @@ async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
   );
 
-  // 4. Add missing columns to tables that already existed
   await ensureColumn("announcements", "date", "DATETIME DEFAULT CURRENT_TIMESTAMP");
   await ensureColumn("bible_verses", "verse_date", "DATETIME DEFAULT CURRENT_TIMESTAMP");
 
@@ -274,10 +248,8 @@ async function initDatabase() {
   await ensureColumn("messages", "reply", "TEXT NULL");
   await ensureColumn("messages", "date", "DATETIME DEFAULT CURRENT_TIMESTAMP");
 
-  // 5. Fix the messages table if it has a different or old structure
   await repairMessagesTable();
 
-  // 6. Show the messages table columns in the terminal (for debugging)
   const [columns] = await db.query("SHOW COLUMNS FROM messages");
   console.log(
     "messages table columns:",
@@ -286,13 +258,10 @@ async function initDatabase() {
 
   console.log("All tables are ready.");
 
-  // 7. Prove that saving really works on this database
+
   await runSelfTest();
 }
 
-// ======================================
-// HOME / HEALTH CHECK
-// ======================================
 
 app.get("/", (req, res) => {
   res.json({
@@ -315,10 +284,6 @@ app.get("/api/health", async (req, res) => {
   }
 });
 
-// ======================================
-// REQUEST LOGGER
-// ======================================
-
 app.use((req, res, next) => {
   if (req.method === "POST" || req.method === "PUT" || req.method === "DELETE") {
     console.log("REQUEST:", req.method, req.originalUrl);
@@ -327,9 +292,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ======================================
-// EVENTS
-// ======================================
 
 app.get("/api/events", async (req, res) => {
   try {
@@ -443,9 +405,6 @@ app.delete("/api/events/:id", async (req, res) => {
   }
 });
 
-// ======================================
-// ANNOUNCEMENTS
-// ======================================
 
 app.get("/api/announcements", async (req, res) => {
   try {
@@ -514,7 +473,7 @@ app.put("/api/announcements/:id", async (req, res) => {
       [title, message, id]
     );
 
-    if (result.affectedRows === 0) {
+    if (result.affectedRows === 0) { 
       return res.status(404).json({
         message: "Announcement not found."
       });
@@ -556,10 +515,6 @@ app.delete("/api/announcements/:id", async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
-
-// ======================================
-// BIBLE VERSES
-// ======================================
 
 app.get("/api/bible-verses", async (req, res) => {
   try {
@@ -676,11 +631,6 @@ app.delete("/api/bible-verses/:id", async (req, res) => {
   }
 });
 
-// ======================================
-// USER AND ADMIN MESSAGES
-// ======================================
-
-// GET ALL MESSAGES
 app.get("/api/messages", async (req, res) => {
   try {
     const [rows] = await db.query(
@@ -696,7 +646,6 @@ app.get("/api/messages", async (req, res) => {
   }
 });
 
-// SEND MESSAGE FROM USER
 app.post("/api/messages", async (req, res) => {
   try {
     const body = req.body || {};
@@ -752,7 +701,6 @@ app.post("/api/messages", async (req, res) => {
   }
 });
 
-// ADMIN REPLY
 app.put("/api/messages/:id", async (req, res) => {
   try {
     const { reply } = req.body;
@@ -811,10 +759,6 @@ app.delete("/api/messages/:id", async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
-
-// ======================================
-// START SERVER
-// ======================================
 
 async function startServer() {
   try {
